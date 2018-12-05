@@ -149,7 +149,7 @@ string SolutionStats::ToString(U64 lst)
 {
     string str;
     std::vector<unsigned> gpuIdx = GpuManager::GetEnabledGPUIndices();
-    auto ResToStr = [&](unsigned* arr, char ai)
+    auto ResToStr = [&](unsigned* arr)
     {
         string str;
         U32 total = 0;
@@ -172,9 +172,10 @@ string SolutionStats::ToString(U64 lst)
         }
         return str;
     };
-    str = "Shares: Accepted " + ResToStr(accepts, 'a');
-    str += "  Rejected " + ResToStr(rejects, 'r');
-    str += "  Failed " + ResToStr(failures, 'f');
+
+    str = FormatString("%s: Accepted %s", GlobalMiningPreset::I().Get()->m_soloOvertStratum ? "Blocks":"Shares",  ResToStr(accepts).c_str()); 
+    str += "  Rejected " + ResToStr(rejects);
+    str += "  Failed " + ResToStr(failures);
     str += FormatString(" Up for %s", SecondsToStr((U64)Elapsed()));
 
     return str;
@@ -200,36 +201,5 @@ string WorkingProgress::TemperatureToString()
         }
     }
     return stemp;
-}
-
-
-string WorkingProgress::ToString()
-{
-    float mh = (float)totalHashRate;
-    string str;
-    if (minersHasheRate.size() == 1)
-    {
-        str = FormatString("Total: %s %s.", GpuManager::Gpus[gpuGlobalIndex[0]].gpuName.c_str(), HashrateToString(mh));
-    }
-    else
-    {
-        str = FormatString("Total: %s ", HashrateToString(mh));
-
-        if (minersHasheRate.size() > 1)
-        {
-            str += "(";
-            for (unsigned i = 0; i < minersHasheRate.size(); i++)
-            {
-                mh = pround(minersHasheRate[i], 2);
-                str += FormatString("%s %s", GpuManager::Gpus[gpuGlobalIndex[i]].gpuName.c_str(), HashrateToString(mh));
-                if (i + 1 != minersHasheRate.size())
-                    str += " ";
-            }
-
-            str += "). ";
-        }
-    }
-
-    return str;
 }
 

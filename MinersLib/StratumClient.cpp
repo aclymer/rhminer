@@ -28,9 +28,11 @@ RHMINER_COMMAND_LINE_DEFINE_GLOBAL_BOOL(g_forceSequentialNonce, false)
 RHMINER_COMMAND_LINE_DEFINE_GLOBAL_BOOL(g_disableCachedNonceReuse, false)
 RHMINER_COMMAND_LINE_DEFINE_GLOBAL_STRING(g_extraPayload, "")
 RHMINER_COMMAND_LINE_DEFINE_GLOBAL_INT(g_apiPort, 7111)
+RHMINER_COMMAND_LINE_DEFINE_GLOBAL_INT(g_workTimeout, 60);
 extern bool g_useGPU;
 
 using boost::asio::ip::tcp;
+
 
 StratumClient::StratumClient(const StratumInit& initData )
 	: Worker("Net"),
@@ -86,21 +88,29 @@ bool StratumClient::IsSoloMining()
     return m_soloMining && !GlobalMiningPreset::I().IsInDevFeeMode();
 }
 
-void StratumClient::SetFailover(string const & host, string const & port)
-{
-	SetFailover(host, port, m_active->user, m_active->pass);
-}
-
 void StratumClient::SetFailover(string const & host, string const & port, string const & user, string const & pass)
 {
-	m_failover.host = host;
-	m_failover.port = port;
-	m_failover.user = user;
-	m_failover.pass = pass;
+    if (!user.length())
+    {
+	    m_failover.host = host;
+	    m_failover.port = port;
+	    m_failover.user = m_active->user;
+	    m_failover.pass = m_active->pass;        
+    }
+    else
+    {
+	    m_failover.host = host;
+	    m_failover.port = port;
+	    m_failover.user = user;
+	    m_failover.pass = pass;
+    }
 }
 
 void StratumClient::Write(tcp::socket& socket, boost::asio::streambuf& buff)
 {
+    if (!m_connected)
+        return;
+
     try
     {
         size_t size = buff.size();
@@ -116,6 +126,9 @@ void StratumClient::Write(tcp::socket& socket, boost::asio::streambuf& buff)
     catch (std::exception const& _e) 
     {
         RHMINER_PRINT_EXCEPTION_EX("Network Error", _e.what());
+        //Reconnect(3000);
+        m_socket.close(); 
+        m_io_service.reset();
     }
 }
 
@@ -193,6 +206,8 @@ void DevReminder()
 
 void StratumClient::Reconnect(U32 preSleepTimeMS)
 {
+    Guard l(m_reconnMutex);
+
     if (m_farm->isMining())
     {
         m_farm->Pause();
@@ -307,7 +322,7 @@ string StratumClient::ReadLineFromServer()
 
 void StratumClient::WorkLoop()
 {
-    if (g_useCPU && !g_useGPU)
+    if (g_useCPU && !g_useGPU && g_setProcessPrio != 1)
         RH_SetThreadPriority(RH_ThreadPrio_High);
 
     while (m_running)
@@ -340,13 +355,19 @@ void StratumClient::WorkLoop()
                 response = ReadLineFromServer();
                 
                 if (!response.empty())
-                {                    
+                {    
+                    m_lastReceivedCommandTime = TimeGetMilliSec();
+
                     if (!response.empty() && response.size() > 2 && response[0] == 0)
                         response = (const char*)&response[1];
 
                     //some deamon will send a \r at the end !?!?
                     if (response.back() == '\r')
                         response = response.substr(0, response.length() - 1);
+
+                    //handle coinotron's invalid request
+                    if (response.find("\"Invalid Request\"") != string::npos)
+                        throw RH_Exception("Invalid Request");
 
                     if (response.front() == '{' && response.back() == '}')
                     {
@@ -362,6 +383,7 @@ void StratumClient::WorkLoop()
                         else
                         {
                             PrintOut("Error. Parsing response failed: %s\n", reader.getFormattedErrorMessages().c_str());
+                            throw RH_Exception("Stratum.Json");
                         }
                     }
                 }
@@ -374,6 +396,7 @@ void StratumClient::WorkLoop()
         {
             if (!m_devFeeConnectionMode)
                 RHMINER_PRINT_EXCEPTION_EX("Network Error",  _e.what());
+            
             Reconnect(3000);
         }
         catch (...) 
@@ -426,6 +449,7 @@ void StratumClient::CallMiningSubscribeMethod()
 void StratumClient::OnPostConnect()
 {
     m_nextWorkDifficulty = GlobalMiningPreset::I().m_localDifficulty;
+    m_lastReceivedCommandTime = TimeGetMilliSec();
 
     m_nonce2 = GetNewNonce2();
     {
@@ -470,7 +494,6 @@ void StratumClient::Preconnect()
     tcp::resolver::query q(m_active->host, m_active->port);
     tcp::resolver::iterator endpoint_iterator = r.resolve(q);
     tcp::resolver::iterator end;
-    
 
     boost::system::error_code error = boost::asio::error::host_not_found;
     while (error && endpoint_iterator != end)
@@ -568,6 +591,12 @@ void StratumClient::MiningNotify(Json::Value& responseObject)
     }
 }
 
+ServerCredential* StratumClient::GetCurrentCred() 
+{ 
+    if (m_active == &m_failover)
+        return &m_failover;
+    return &m_primary;
+}
 
 bool StratumClient::GetCurrentWorkInfo(h256& out_header)
 {
@@ -598,12 +627,7 @@ void StratumClient::SendWorkToMiners(PascalWorkSptr wp)
     InitializeWP(wp);
 
     //print status
-    string ids;
-    if (IsSoloMining())
-        ids = FormatString("#%u", m_soloJobId);
-    else
-        ids = wp->m_jobID;
-    
+    string ids = wp->m_jobID;
     U64 ts = ToUIntX(wp->m_ntime);    
     PrintOutCritical("Received new Work %s. Work target 0x%s (diff %s)\n", ids.c_str(), toHex(wp->GetDeviceTargetUpperBits()).c_str(), DiffToStr((float)wp->m_workDiff));
 
@@ -646,7 +670,8 @@ bool StratumClient::ProcessMiningNotify(Json::Value& params)
         {
             PascalWorkSptr newWork = InstanciateWorkPackage();
             newWork->Init(job, h256(prevHash), coinbase1, coinbase2, nTime, cleanWork, m_nonce1, m_nonce2Size, m_extraNonce);
-            
+           
+
             SendWorkToMiners(newWork);
         }
 
@@ -812,7 +837,7 @@ void StratumClient::RespondMiningSubmit(Json::Value& responseObject, U64 gpuInde
     bool succeded = HandleMiningSubmitResponceResult(responseObject, errorStr, lastMethodCallTime);
     if (succeded)
     {
-        if (!m_devFeeConnectionMode)
+        if (!GlobalMiningPreset::I().IsInDevFeeMode())
         {
             PrintOutCritical("Share accepted by %s\n\n", m_active->HostDescr());
             m_farm->AddAcceptedSolution((U32)gpuIndex);
@@ -821,9 +846,9 @@ void StratumClient::RespondMiningSubmit(Json::Value& responseObject, U64 gpuInde
     }
     else
     {
-        if (!m_devFeeConnectionMode)
+        if (!GlobalMiningPreset::I().IsInDevFeeMode())
         {
-            PrintOutCritical("Share rejected by %s. Reason :%s\n\n", m_active->HostDescr(), errorStr.c_str());
+            PrintOutCritical("Share REJECTED by %s. Reason :%s\n\n", m_active->HostDescr(), errorStr.c_str());
             m_farm->AddRejectedSolution((U32)gpuIndex);
         }
     }
@@ -978,7 +1003,7 @@ void StratumClient::ProcessMiningNotifySolo(Json::Value& jsondata)
         {
             //NOTE: there is a bug in the wallet where it will resent the last submited payload in the next mining notify. 
             //      If this error recure more than 2 times in a row, just restart the wallet.
-            RHMINER_EXIT_APP("Error. Deamon/Wallet miner name is to long. Set a name under 26 caracters.\nNOTE, if this error persist, just restart the demaon/wallet.");
+            RHMINER_EXIT_APP("Error. Deamon/Wallet miner name is too long. Set a name under 26 caracters.\nNOTE, if this error persist, just restart the demaon/wallet.");
         }
         else
         {
@@ -1007,7 +1032,7 @@ void StratumClient::ProcessMiningNotifySolo(Json::Value& jsondata)
 
         //send work to miners
         PascalWorkSptr newWork = InstanciateWorkPackage();
-        newWork->Init(toHex(m_soloJobId++), h256("0000000000000000000000000000000000000000000000000000000000000000"), coinbase1, coinbase2, nTime, cleanFlag, m_nonce1, m_nonce2Size, m_extraNonce);
+        newWork->Init(toHex(++m_soloJobId), h256("0000000000000000000000000000000000000000000000000000000000000000"), coinbase1, coinbase2, nTime, cleanFlag, m_nonce1, m_nonce2Size, m_extraNonce);
         newWork->m_soloTargetPow = soloTargetPow;
         SendWorkToMiners(newWork);
     }
@@ -1235,6 +1260,9 @@ void StratumClient::CallSubmit(SolutionSptr solution)
         }
     }
 
+    if (!m_connected)
+        return;
+
     string params;
     PascalWorkPackage* cbwp = solution->m_work.get();
     RHMINER_ASSERT(cbwp);
@@ -1245,6 +1273,7 @@ void StratumClient::CallSubmit(SolutionSptr solution)
     if (IsSoloMining())
     {
         U32 nTimeV = ToUIntX(cbwp->m_ntime);
+
         char payload[64]; 
         memcpy(payload, &solution->m_work->m_fullHeader[90], 34);
         payload[34] = 0;
@@ -1263,7 +1292,7 @@ void StratumClient::CallSubmit(SolutionSptr solution)
         GetSysTimeStrF(tstr, sizeof(tstr), "%H:%M:%S", false);
         string nonceHex = toHex(currentNonce);
 
-        PrintOut("Nonce %llX found on %s at %s. Submitting to %s\n", currentNonce, GpuManager::Gpus[solution->m_gpuIndex].gpuName.c_str(), tstr, m_active->HostDescr());
+        PrintOut("Nonce %llX found on %s for job %s at %s. Submitting to %s\n", currentNonce, GpuManager::Gpus[solution->m_gpuIndex].gpuName.c_str(), cbwp->m_jobID.c_str(), tstr, m_active->HostDescr());
 
         RHMINER_ASSERT(cbwp->m_nonce2 != U32_Max);
         params = FormatString("\"%s\",\"%s\",\"%llx\",\"%s\",\"%s\"",
@@ -1290,5 +1319,3 @@ PascalWorkSptr StratumClient::InstanciateWorkPackage(PascalWorkSptr* cloneFrom)
         return PascalWorkSptr(new PascalWorkPackage(IsSoloMining()));
     }    
 }
-
-

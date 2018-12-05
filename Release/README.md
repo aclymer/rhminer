@@ -1,8 +1,12 @@
 # rhminer binaries 
- 
+
+**Current version is 1.1** <br>
+
+
 Prebuilt binaries for the PascalCoin RandomHash miner.<br> 
 Please refer to https://en.wikipedia.org/wiki/CUDA to select the CUDA architecture name of your GPU
 
+Download here : https://github.com/polyminer1/rhminer/releases/<br>
 ## Alternative download site : 
 * Windows binaries https://mega.nz/#F!DqpAjCJQ!Q12a_YRlu_CWA92kIglKug
 * Linux binaries https://mega.nz/#F!Dz4ElAwK!gbWbU4OpmEf6YnOCLIKfSQ
@@ -13,35 +17,35 @@ Please refer to https://en.wikipedia.org/wiki/CUDA to select the CUDA architectu
 Windows MD5 : 
 -------------------------------- 
 MD5 for rhminer.exe CPU is 
-383029e765a1c1b2143f5a7632cfb041
+d6009b7ede966a0642586fe7fb3c66ea
 -------------------------------- 
 MD5 for rhminer.exe Kepler is 
-ea6f0b734bbf09414fbb93c090add80e
+ad74e797f5c1633aae4843a75d574753
 -------------------------------- 
 MD5 for rhminer.exe Maxwell is 
-581591dc9cc3d3263fd05ca2074e4faa
+8100694466c4c889887933a06dd061fa
 -------------------------------- 
 MD5 for rhminer.exe Pascal is 
-59acb8f318ead088adef574447732fa0
+b08594262bec75964b58b1885a4d2f42
 -------------------------------- 
 MD5 for rhminer.exe Volta is 
-880f4194aec9b38bd2818943ecd86295
+d3714a65b3011a64dd1b92a71f0ea1df
 -------------------------------- 
  
 Linux MD5 
 -------------------------------
 MD5 for rhminer for CPU is :
-7f0615482f10f05b2200be7cb7dc0bff
+3bcd2c982a49e03637ab5503a00acbc0
 -------------------------------
 MD5 for rhminer for Kepler is :
-2c26171017e70b5085a951c6c96aeae1
+97f2554fe8ebc88b1c7c9bd764179b49
 -------------------------------
 MD5 for rhminer for Maxwell is :
-33154792a5e91a912494a77ad8706215
+6a0bef630b462ea82612e8d071a560cd
 -------------------------------
 MD5 for rhminer for Pascal is :
-f0d1a7b4caa54960ebcc704415a3e93a
+1c17e5abdc12e96b32ca110b8a7614f5
 -------------------------------
 MD5 for rhminer for Volta is :
-7b234b5d13d5ad21f9dba9a9dc9ca1b5
+9eb6939c4fbe0111d71831bdef2d6213
 ``` 

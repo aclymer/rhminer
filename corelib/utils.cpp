@@ -15,14 +15,12 @@
 /// @file
 /// @copyright Polyminer1, QualiaLibre
 
-
 #include "precomp.h"
 #include <random>
 #include "utils.h"
 #include <sys/stat.h>
 
 #ifdef _WIN32_WINNT
-
 #include <io.h>
 #include <direct.h>
 #include <time.h>
@@ -32,7 +30,8 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-#include <stdarg.h> 
+#include <stdarg.h>
+#include <mm_malloc.h>
 
 #if !defined(_WIN32_WINNT)
 #define OutputDebugStringA(...) 
@@ -407,7 +406,6 @@ U64 AtomicGet(U64& x)
     return __sync_add_and_fetch(&x, 0);
 #endif
 }
-
 void RH_SetThreadPriority(RH_ThreadPrio prio)
 { 
 #ifdef _WIN32_WINNT
@@ -415,14 +413,16 @@ void RH_SetThreadPriority(RH_ThreadPrio prio)
     {
         case RH_ThreadPrio_Normal:  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL); break;
         case RH_ThreadPrio_Low:     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); break;
-        case RH_ThreadPrio_High:    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST); break;        
+        case RH_ThreadPrio_High:    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST); break;
+        case RH_ThreadPrio_RT:      SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL); break;        
     }
 #else
     switch(prio)
     {
         case RH_ThreadPrio_Normal:  setpriority(PRIO_PROCESS, 0, 0); break;
         case RH_ThreadPrio_Low:     setpriority(PRIO_PROCESS, 0, -5); break;
-        case RH_ThreadPrio_High:    setpriority(PRIO_PROCESS, 0, 10); break;
+        case RH_ThreadPrio_High:    setpriority(PRIO_PROCESS, 0, 20); break;
+        case RH_ThreadPrio_RT:      setpriority(PRIO_PROCESS, 0, 25); break;
     }
 #endif
 }
@@ -776,26 +776,18 @@ double le256todouble(const void *target)
 void* RH_SysAlloc(size_t s)
 {
 #ifdef _WIN32_WINNT
-    //return VirtualAlloc(NULL, s, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     return _aligned_malloc(s, 4096);
 #else
-    const int ALIGNVAL = 4096;
-    void* ptr = malloc(s + ALIGNVAL + sizeof(size_t));
-    size_t ptrAli = ((size_t)ptr) + ALIGNVAL-(((size_t)ptr) % ALIGNVAL);
-    U8* ptrAliBack = ((U8*)ptrAli) - sizeof(size_t);
-    *(size_t*)ptrAliBack = (size_t)ptr;
-    return (void*)ptrAli;
+    return _mm_malloc( s, 4096 );
 #endif
 }
 
 void RH_SysFree(void* ptr)
 {
 #ifdef _WIN32_WINNT
-    //VirtualFree(ptr, 0, MEM_RELEASE);
     _aligned_free(ptr);
 #else
-    size_t* ptrAliBack = (size_t*)(((U8*)ptr) - sizeof(size_t));
-    free((void*)*ptrAliBack);
+    _mm_free(ptr);
 #endif    
 }
 
